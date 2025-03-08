@@ -72,9 +72,11 @@ public struct CodableClassMacro: MemberMacro {
         // Generate encode(to encoder:)
         let encodeToEncoder = try FunctionDeclSyntax("public func encode(to encoder: Encoder) throws") {
             CodeBlockItemListSyntax {
+                CodeBlockItemSyntax("let state = EncodingState.track(self, encoder: encoder)")
+                CodeBlockItemSyntax("defer { EncodingState.untrack(self, state: state) }")
                 CodeBlockItemSyntax("var container = encoder.container(keyedBy: CodingKeys.self)")
                 for key in codingKeys {
-                    CodeBlockItemSyntax("try container.encode(self.\(raw: key), forKey: .\(raw: key))")
+                    CodeBlockItemSyntax("if !state.contains(self.\(raw: key))  { try container.encode(self.\(raw: key), forKey: .\(raw: key)) }")
                 }
             }
         }
