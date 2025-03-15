@@ -19,6 +19,40 @@ public struct CodableClassMacro: MemberMacro {
         
         let codingKeys = properties.map { property in
             guard let binding = property.bindings.first else { return "" }
+            
+            // skip non var
+            if property.bindingSpecifier.text != "var" {
+                return nil
+            }
+            // skip properties with @NonCodable
+            for attribute in property.attributes {
+                if let attribute = attribute.as(AttributeSyntax.self) {
+                    if let attributeName = attribute.attributeName.as(IdentifierTypeSyntax.self) {
+                        if attributeName.name.text == "NonCodable" {
+                            return nil
+                        }
+                    }
+                }
+            }
+            // skip static properties
+            for modifier in property.modifiers {
+                if modifier.name.text == "static" {
+                    return nil
+                }
+            }
+            if let accessors = binding.accessorBlock?.accessors {
+                if accessors.as(CodeBlockItemListSyntax.self) != nil {
+                    return nil
+                }
+                // skip computed properties
+                if let accessors = accessors.as(AccessorDeclListSyntax.self) {
+                    for accessor in accessors {
+                        if accessor.accessorSpecifier.text == "get" {
+                            return nil
+                        }
+                    }
+                }
+            }
             guard let identifier = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text else { return nil }
             return "\(identifier)"
         }.compactMap { $0 }
@@ -105,7 +139,7 @@ public struct CodableClassMacro: MemberMacro {
             let typeString = arrayType!.element.as(IdentifierTypeSyntax.self)?.name.text
             return typeString != nil ? ("[\(typeString!)]", false) : ("Any", false)
         }
-
+        
         // optional
         let optionalType = property.bindings.first?.typeAnnotation?.type.as(OptionalTypeSyntax.self)?.wrappedType
         if optionalType != nil {
@@ -121,9 +155,21 @@ public struct CodableClassMacro: MemberMacro {
     }
 }
 
+public struct NonCodableMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        // This macro does nothing, so it returns an empty array.
+        return []
+    }
+}
+
 @main
 struct CodableTestMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
-        CodableClassMacro.self
+        CodableClassMacro.self,
+        NonCodableMacro.self
     ]
 }

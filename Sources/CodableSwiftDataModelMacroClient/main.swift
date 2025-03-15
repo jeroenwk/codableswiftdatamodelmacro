@@ -1,6 +1,59 @@
 import CodableSwiftDataModelMacro
 import Foundation
 
+import Foundation
+
+// Key to track objects being encoded in the current encoder instance
+extension CodingUserInfoKey {
+    static let encodingState = CodingUserInfoKey(rawValue: "encodingState")!
+}
+
+// Thread-safe wrapper to track objects during encoding
+final class EncodingState {
+    private let lock = NSLock()
+    private var objectIDs = Set<ObjectIdentifier>()
+    
+    static func track(_ object: AnyObject, encoder: any Encoder) -> EncodingState {
+        guard let state = encoder.userInfo[.encodingState] as? EncodingState else {
+            fatalError("Use ModelEncoder to decode")
+        }
+        state.insert(object)
+        return state
+    }
+    
+    static func untrack(_ object: AnyObject, state: EncodingState) {
+        state.remove(object)
+    }
+    
+    
+    func contains<T: AnyObject>(_ object: T?) -> Bool {
+        guard let o = object else {
+            return false
+        }
+        lock.lock()
+        let result = objectIDs.contains(ObjectIdentifier(o))
+        lock.unlock()
+        return result
+    }
+    
+    func contains<T>(_ object: T?) -> Bool {
+         return false
+     }
+    
+    private func insert(_ object: AnyObject) {
+        lock.lock()
+        objectIDs.insert(ObjectIdentifier(object))
+        lock.unlock()
+    }
+    
+    private func remove(_ object: AnyObject) {
+        lock.lock()
+        objectIDs.remove(ObjectIdentifier(object))
+        lock.unlock()
+    }
+}
+
+
 @CodableClass
 class MyCodableClass : Codable {
     var name: String = ""
