@@ -1,7 +1,10 @@
 import CodableSwiftDataModelMacro
 import Foundation
-
+import SwiftData
 import Foundation
+import Combine
+
+public typealias ObjectDidChangePublisher = PassthroughSubject<(oldData: Data, newData: Data), Never>
 
 // Key to track objects being encoded in the current encoder instance
 extension CodingUserInfoKey {

@@ -57,6 +57,9 @@ public struct CodableClassMacro: MemberMacro {
             return "\(identifier)"
         }.compactMap { $0 }
         
+        let prevDataProperty = try VariableDeclSyntax("@Transient @NonCodable public var prevData: Data?")
+        let objectDidChangeProperty = try VariableDeclSyntax("@Transient @NonCodable public var objectDidChange = ObjectDidChangePublisher()")
+        
         // Add static codingKeys property
         let codingKeysProperty = try VariableDeclSyntax("public static var codingKeys: [CodingKey]") {
             CodeBlockItemListSyntax {
@@ -116,6 +119,8 @@ public struct CodableClassMacro: MemberMacro {
         }
         
         return [
+            DeclSyntax(prevDataProperty),
+            DeclSyntax(objectDidChangeProperty),
             DeclSyntax(codingKeysProperty),
             DeclSyntax(codingKeysEnum),
             DeclSyntax(initFromDecoder),

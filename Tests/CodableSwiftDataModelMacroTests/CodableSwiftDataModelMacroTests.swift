@@ -79,6 +79,10 @@ final class CodableSwiftDataModelMacroTests: XCTestCase {
                     self.setprop = setprop
                 }
             
+                @Transient @NonCodable public var prevData: Data?
+            
+                @Transient @NonCodable public var objectDidChange = ObjectDidChangePublisher()
+            
                 public static var codingKeys: [CodingKey] {
                     return CodingKeys.allCases
                 }
