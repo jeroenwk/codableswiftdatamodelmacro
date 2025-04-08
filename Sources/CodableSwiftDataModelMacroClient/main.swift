@@ -11,6 +11,73 @@ extension CodingUserInfoKey {
     static let encodingState = CodingUserInfoKey(rawValue: "encodingState")!
 }
 
+extension CodingUserInfoKey {
+    static let decodingState = CodingUserInfoKey(rawValue: "decodingState")!
+}
+
+// Thread-safe wrapper to track decoding
+final class DecodingState {
+    private let lock = NSLock()
+    private var objectIDs: [ObjectIdentifier : Int] = [:]
+    
+    static func initialize(decoder: any Decoder) -> DecodingState {
+        guard let state = decoder.userInfo[.decodingState] as? DecodingState else {
+            fatalError("Use ModelDecoder to decode")
+        }
+        return state
+    }
+    
+    func track(_ object: AnyObject)  {
+        insert(object)
+    }
+
+    
+    func untrack(_ object: AnyObject) {
+        remove(object)
+    }
+    
+    
+    func contains<T: AnyObject>(_ object: T?) -> Bool {
+        guard let o = object else {
+            return false
+        }
+        lock.lock()
+        let id = ObjectIdentifier(o)
+        let result = objectIDs[id] != nil
+        lock.unlock()
+        return result
+    }
+    
+    func contains<T>(_ object: T?) -> Bool {
+         return false
+     }
+    
+    private func insert(_ object: AnyObject) {
+        lock.lock()
+        let id = ObjectIdentifier(object)
+        if let count = objectIDs[id] {
+            objectIDs[id] = count + 1
+        } else {
+            objectIDs[id] = 1
+        }
+        lock.unlock()
+    }
+    
+    private func remove(_ object: AnyObject) {
+        lock.lock()
+        
+        let id = ObjectIdentifier(object)
+        if let count = objectIDs[id] {
+            objectIDs[id] = count - 1
+            if objectIDs[id] == 0 {
+                objectIDs[id] = nil
+            }
+        }
+        lock.unlock()
+    }
+}
+
+
 // Thread-safe wrapper to track objects during encoding
 final class EncodingState {
     private let lock = NSLock()

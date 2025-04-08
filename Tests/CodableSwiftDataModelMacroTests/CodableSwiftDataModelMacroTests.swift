@@ -96,13 +96,18 @@ final class CodableSwiftDataModelMacroTests: XCTestCase {
                 }
             
                 required convenience public init(from decoder: Decoder) throws {
+                    let state = DecodingState.initialize(decoder: decoder)
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     let name = try container.decode(String.self, forKey: .name)
                     let price = try container.decode(Float.self, forKey: .price)
                     let foo = try container.decodeIfPresent(Foo.self, forKey: .foo)
-                    let bars = try container.decodeIfPresent([Bar].self, forKey: .bars)
+                    var bars = try container.decodeIfPresent([Bar].self, forKey: .bars)
+                    bars?.removeAll {
+                        state.contains($0)
+                    }
                     let setprop = try container.decode(Float.self, forKey: .setprop)
                     self.init(name: name, price: price, foo: foo, bars: bars, setprop: setprop)
+                    state.track(self)
                 }
 
                 func decode(from decoder: Decoder) throws {

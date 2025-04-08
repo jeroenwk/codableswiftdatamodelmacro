@@ -77,17 +77,29 @@ public struct CodableClassMacro: MemberMacro {
         // Generate init(from decoder:)
         let initFromDecoder = try InitializerDeclSyntax("required convenience public init(from decoder: Decoder) throws") {
             CodeBlockItemListSyntax {
+                CodeBlockItemSyntax("let state = DecodingState.initialize(decoder: decoder)")
                 CodeBlockItemSyntax("let container = try decoder.container(keyedBy: CodingKeys.self)")
                 for key in codingKeys {
                     let typeInfo = type(for: key, in: properties)
                     if typeInfo.1 {
-                        CodeBlockItemSyntax("let \(raw: key) = try container.decodeIfPresent(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                        if typeInfo.2 {
+                            CodeBlockItemSyntax("var \(raw: key) = try container.decodeIfPresent(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                            CodeBlockItemSyntax("\(raw: key)?.removeAll { state.contains($0) }")
+                        } else {
+                            CodeBlockItemSyntax("let \(raw: key) = try container.decodeIfPresent(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                        }
                     } else {
-                        CodeBlockItemSyntax("let \(raw: key) = try container.decode(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                        if typeInfo.2 {
+                            CodeBlockItemSyntax("var \(raw: key) = try container.decode(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                            CodeBlockItemSyntax("\(raw: key).removeAll { state.contains($0) }")
+                        } else {
+                            CodeBlockItemSyntax("let \(raw: key) = try container.decode(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                        }
                     }
                 }
                 let initArgs = codingKeys.map { "\($0): \($0)" }.joined(separator: ", ")
                 CodeBlockItemSyntax("self.init(\(raw: initArgs))")
+                CodeBlockItemSyntax("state.track(self)")
             }
         }
         
@@ -129,33 +141,33 @@ public struct CodableClassMacro: MemberMacro {
         ]
     }
     
-    static func type(for key: String, in properties: [VariableDeclSyntax]) -> (String, Bool) {
+    static func type(for key: String, in properties: [VariableDeclSyntax]) -> (String, Bool, Bool) {
         guard let property = properties.first(where: { $0.bindings.first?.pattern.as(IdentifierPatternSyntax.self)?.identifier.text == key }) else {
-            return ("Any", false)
+            return ("Any", false, false)
         }
         
         // simple non-optional member
         let simpleType = property.bindings.first?.typeAnnotation?.type.as(IdentifierTypeSyntax.self)
-        if simpleType != nil { return (simpleType!.name.text, false) }
+        if simpleType != nil { return (simpleType!.name.text, false, false) }
         
         // array
         let arrayType = property.bindings.first?.typeAnnotation?.type.as(ArrayTypeSyntax.self)
         if arrayType != nil {
             let typeString = arrayType!.element.as(IdentifierTypeSyntax.self)?.name.text
-            return typeString != nil ? ("[\(typeString!)]", false) : ("Any", false)
+            return typeString != nil ? ("[\(typeString!)]", false, true) : ("Any", false, false)
         }
         
         // optional
         let optionalType = property.bindings.first?.typeAnnotation?.type.as(OptionalTypeSyntax.self)?.wrappedType
         if optionalType != nil {
             let optionalSimpleType = optionalType!.as(IdentifierTypeSyntax.self)
-            if optionalSimpleType != nil { return ("\(optionalSimpleType!.name.text)", true) }
+            if optionalSimpleType != nil { return ("\(optionalSimpleType!.name.text)", true, false) }
             
             let typeString = optionalType!.as(ArrayTypeSyntax.self)?.element.as(IdentifierTypeSyntax.self)?.name.text
-            return typeString != nil ? ("[\(typeString!)]", true) : ("Any", true)
+            return typeString != nil ? ("[\(typeString!)]", true, true) : ("Any", true, false)
             
         } else {
-            return ("Any", false)
+            return ("Any", false, false)
         }
     }
 }
