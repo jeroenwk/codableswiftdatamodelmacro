@@ -103,21 +103,6 @@ public struct CodableClassMacro: MemberMacro {
             }
         }
         
-        // Generate decode(from decoder:)
-        let decodeFromDecoder = try FunctionDeclSyntax("func decode(from decoder: Decoder) throws") {
-            CodeBlockItemListSyntax {
-                CodeBlockItemSyntax("let container = try decoder.container(keyedBy: CodingKeys.self)")
-                for key in codingKeys {
-                    let typeInfo = type(for: key, in: properties)
-                    if typeInfo.1 {
-                        CodeBlockItemSyntax("self.\(raw: key) = try container.decodeIfPresent(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
-                    } else {
-                        CodeBlockItemSyntax("self.\(raw: key) = try container.decode(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
-                    }
-                }
-            }
-        }
-        
         // Generate encode(to encoder:)
         let encodeToEncoder = try FunctionDeclSyntax("public func encode(to encoder: Encoder) throws") {
             CodeBlockItemListSyntax {
@@ -136,7 +121,6 @@ public struct CodableClassMacro: MemberMacro {
             DeclSyntax(codingKeysProperty),
             DeclSyntax(codingKeysEnum),
             DeclSyntax(initFromDecoder),
-            DeclSyntax(decodeFromDecoder),
             DeclSyntax(encodeToEncoder)
         ]
     }

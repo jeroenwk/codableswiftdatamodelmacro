@@ -110,15 +110,6 @@ final class CodableSwiftDataModelMacroTests: XCTestCase {
                     state.track(self)
                 }
 
-                func decode(from decoder: Decoder) throws {
-                    let container = try decoder.container(keyedBy: CodingKeys.self)
-                    self.name = try container.decode(String.self, forKey: .name)
-                    self.price = try container.decode(Float.self, forKey: .price)
-                    self.foo = try container.decodeIfPresent(Foo.self, forKey: .foo)
-                    self.bars = try container.decodeIfPresent([Bar].self, forKey: .bars)
-                    self.setprop = try container.decode(Float.self, forKey: .setprop)
-                }
-
                 public func encode(to encoder: Encoder) throws {
                     let state = EncodingState.track(self, encoder: encoder)
                     defer {
