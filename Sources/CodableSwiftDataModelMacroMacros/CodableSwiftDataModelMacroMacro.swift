@@ -77,21 +77,21 @@ public struct CodableClassMacro: MemberMacro {
         // Generate init(from decoder:)
         let initFromDecoder = try InitializerDeclSyntax("required convenience public init(from decoder: Decoder) throws") {
             CodeBlockItemListSyntax {
-                CodeBlockItemSyntax("let state = DecodingState.initialize(decoder: decoder)")
+                //CodeBlockItemSyntax("let state = DecodingState.initialize(decoder: decoder, modelTypeString: String(describing: Self.self))")
                 CodeBlockItemSyntax("let container = try decoder.container(keyedBy: CodingKeys.self)")
                 for key in codingKeys {
                     let typeInfo = type(for: key, in: properties)
                     if typeInfo.1 {
                         if typeInfo.2 {
-                            CodeBlockItemSyntax("var \(raw: key) = try container.decodeIfPresent(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
-                            CodeBlockItemSyntax("\(raw: key)?.removeAll { state.contains($0) }")
+                            CodeBlockItemSyntax("let \(raw: key) = try container.decodeIfPresent(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                            //CodeBlockItemSyntax("\(raw: key)?.removeAll { state.contains($0) && state.isInversCollection($0) }")
                         } else {
                             CodeBlockItemSyntax("let \(raw: key) = try container.decodeIfPresent(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
                         }
                     } else {
                         if typeInfo.2 {
-                            CodeBlockItemSyntax("var \(raw: key) = try container.decode(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
-                            CodeBlockItemSyntax("\(raw: key).removeAll { state.contains($0) }")
+                            CodeBlockItemSyntax("let \(raw: key) = try container.decode(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
+                            //CodeBlockItemSyntax("\(raw: key).removeAll { state.contains($0) && state.isInversCollection($0) }")
                         } else {
                             CodeBlockItemSyntax("let \(raw: key) = try container.decode(\(raw: typeInfo.0).self, forKey: .\(raw: key))")
                         }
@@ -99,7 +99,7 @@ public struct CodableClassMacro: MemberMacro {
                 }
                 let initArgs = codingKeys.map { "\($0): \($0)" }.joined(separator: ", ")
                 CodeBlockItemSyntax("self.init(\(raw: initArgs))")
-                CodeBlockItemSyntax("state.track(self)")
+                //CodeBlockItemSyntax("state.track(self)")
             }
         }
         
