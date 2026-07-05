@@ -96,18 +96,21 @@ final class CodableSwiftDataModelMacroTests: XCTestCase {
                 }
             
                 required convenience public init(from decoder: Decoder) throws {
-                    let state = DecodingState.initialize(decoder: decoder)
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     let name = try container.decode(String.self, forKey: .name)
                     let price = try container.decode(Float.self, forKey: .price)
                     let foo = try container.decodeIfPresent(Foo.self, forKey: .foo)
-                    var bars = try container.decodeIfPresent([Bar].self, forKey: .bars)
-                    bars?.removeAll {
-                        state.contains($0)
-                    }
+                    let bars = try container.decodeIfPresent([Bar].self, forKey: .bars)
                     let setprop = try container.decode(Float.self, forKey: .setprop)
                     self.init(name: name, price: price, foo: foo, bars: bars, setprop: setprop)
-                    state.track(self)
+                }
+
+                public func updateValues(from other: MyCodableClass) {
+                    self.name = SyncReconcile.value(existing: self.name, incoming: other.name)
+                    self.price = SyncReconcile.value(existing: self.price, incoming: other.price)
+                    self.foo = SyncReconcile.value(existing: self.foo, incoming: other.foo)
+                    self.bars = SyncReconcile.value(existing: self.bars, incoming: other.bars)
+                    self.setprop = SyncReconcile.value(existing: self.setprop, incoming: other.setprop)
                 }
 
                 public func encode(to encoder: Encoder) throws {

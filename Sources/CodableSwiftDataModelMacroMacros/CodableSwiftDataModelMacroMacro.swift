@@ -103,6 +103,24 @@ public struct CodableClassMacro: MemberMacro {
             }
         }
         
+        // Generate updateValues(from:) — in-place update of every coded property
+        // from another instance (typically a freshly decoded payload). Assignment
+        // routes through `SyncReconcile.value(existing:incoming:)`, which the host
+        // module must provide: a generic overload plain-assigns scalars, while
+        // constrained overloads reconcile relationship properties (to-one /
+        // to-many of synced models) by child id so persisted child objects are
+        // updated in place instead of being recreated. Keeping the call uniform
+        // lets host-side overload resolution decide — this macro is syntactic and
+        // cannot know which property types are synced models.
+        let className = classDecl.name.text
+        let updateValuesFunc = try FunctionDeclSyntax("public func updateValues(from other: \(raw: className))") {
+            CodeBlockItemListSyntax {
+                for key in codingKeys {
+                    CodeBlockItemSyntax("self.\(raw: key) = SyncReconcile.value(existing: self.\(raw: key), incoming: other.\(raw: key))")
+                }
+            }
+        }
+
         // Generate encode(to encoder:)
         let encodeToEncoder = try FunctionDeclSyntax("public func encode(to encoder: Encoder) throws") {
             CodeBlockItemListSyntax {
@@ -121,6 +139,7 @@ public struct CodableClassMacro: MemberMacro {
             DeclSyntax(codingKeysProperty),
             DeclSyntax(codingKeysEnum),
             DeclSyntax(initFromDecoder),
+            DeclSyntax(updateValuesFunc),
             DeclSyntax(encodeToEncoder)
         ]
     }
