@@ -121,6 +121,41 @@ public struct CodableClassMacro: MemberMacro {
             }
         }
 
+        // Generate relinkChildren(in:) — swap freshly-decoded nested relationship
+        // children for the persisted rows of the same id before insert, in the
+        // strict fetch-all → detach-all → attach order (see the `ChildRelink`
+        // doc for why the ordering is load-bearing). Every coded property routes
+        // through `ChildRelink` overloads — the host's constrained overloads
+        // handle relationship types, the generic base passes scalars through —
+        // so the macro stays type-agnostic, same pattern as `updateValues`.
+        // Properties marked @BackRef resolve via `resolveBackRef` (persisted
+        // parent or nil, never the decoded copy).
+        let backRefKeys = Set(codingKeys.filter { key in
+            guard let property = properties.first(where: { $0.bindings.first?.pattern.as(IdentifierPatternSyntax.self)?.identifier.text == key }) else { return false }
+            for attribute in property.attributes {
+                if let attribute = attribute.as(AttributeSyntax.self),
+                   let attributeName = attribute.attributeName.as(IdentifierTypeSyntax.self),
+                   attributeName.name.text == "BackRef" {
+                    return true
+                }
+            }
+            return false
+        })
+        let relinkChildrenFunc = try FunctionDeclSyntax("public func relinkChildren(in context: ModelContext)") {
+            CodeBlockItemListSyntax {
+                for key in codingKeys {
+                    let resolver = backRefKeys.contains(key) ? "resolveBackRef" : "resolve"
+                    CodeBlockItemSyntax("let __relinked_\(raw: key) = ChildRelink.\(raw: resolver)(self.\(raw: key), in: context)")
+                }
+                for key in codingKeys {
+                    CodeBlockItemSyntax("self.\(raw: key) = ChildRelink.detached(self.\(raw: key))")
+                }
+                for key in codingKeys {
+                    CodeBlockItemSyntax("self.\(raw: key) = __relinked_\(raw: key)")
+                }
+            }
+        }
+
         // Generate encode(to encoder:)
         let encodeToEncoder = try FunctionDeclSyntax("public func encode(to encoder: Encoder) throws") {
             CodeBlockItemListSyntax {
@@ -140,6 +175,7 @@ public struct CodableClassMacro: MemberMacro {
             DeclSyntax(codingKeysEnum),
             DeclSyntax(initFromDecoder),
             DeclSyntax(updateValuesFunc),
+            DeclSyntax(relinkChildrenFunc),
             DeclSyntax(encodeToEncoder)
         ]
     }
@@ -186,10 +222,22 @@ public struct NonCodableMacro: PeerMacro {
     }
 }
 
+public struct BackRefMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        // Marker only — read by CodableClassMacro when generating relinkChildren.
+        return []
+    }
+}
+
 @main
 struct CodableTestMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         CodableClassMacro.self,
-        NonCodableMacro.self
+        NonCodableMacro.self,
+        BackRefMacro.self
     ]
 }
