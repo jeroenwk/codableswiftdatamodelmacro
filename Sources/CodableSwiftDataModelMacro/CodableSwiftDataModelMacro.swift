@@ -60,3 +60,21 @@ public enum ChildRelink {
     /// Phase-2 detach; hosts return nil for relationship types.
     public static func detached<T>(_ value: T) -> T { value }
 }
+
+/// Collector for the generated `relationshipTargets()`.
+///
+/// The macro emits `RelationshipTargets.collect(self.x, into: &__targets)` for
+/// every coded property and returns the accumulated `[Any]`. This base overload
+/// ignores the value — correct for scalars and value types. Host modules declare
+/// MORE SPECIFIC overloads in an `extension RelationshipTargets` for their
+/// persisted-model relationship types (to-one appends the value if non-nil,
+/// to-many appends the elements); Swift overload resolution at the
+/// macro-expansion site picks the most specific visible candidate, so the macro
+/// itself stays type-agnostic.
+///
+/// Purpose: hosts validate before a commit that no relationship target is
+/// managed by a DIFFERENT model context than the one being written to —
+/// SwiftData does not check cross-context links and silently corrupts the graph.
+public enum RelationshipTargets {
+    public static func collect<T>(_ value: T, into targets: inout [Any]) {}
+}

@@ -139,6 +139,17 @@ final class CodableSwiftDataModelMacroTests: XCTestCase {
                     self.parent = __relinked_parent
                 }
 
+                public func relationshipTargets() -> [Any] {
+                    var __targets: [Any] = []
+                    RelationshipTargets.collect(self.name, into: &__targets)
+                    RelationshipTargets.collect(self.price, into: &__targets)
+                    RelationshipTargets.collect(self.foo, into: &__targets)
+                    RelationshipTargets.collect(self.bars, into: &__targets)
+                    RelationshipTargets.collect(self.setprop, into: &__targets)
+                    RelationshipTargets.collect(self.parent, into: &__targets)
+                    return __targets
+                }
+
                 public func encode(to encoder: Encoder) throws {
                     let state = EncodingState.track(self, encoder: encoder)
                     defer {

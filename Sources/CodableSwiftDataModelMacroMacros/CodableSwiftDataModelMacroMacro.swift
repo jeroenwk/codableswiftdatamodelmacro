@@ -156,6 +156,24 @@ public struct CodableClassMacro: MemberMacro {
             }
         }
 
+        // Generate relationshipTargets() — enumerate the CURRENT values of every
+        // coded property through `RelationshipTargets.collect`; host modules
+        // declare constrained overloads that append persisted-model to-one /
+        // to-many values, the generic base ignores scalars (same host-overload
+        // pattern as `updateValues` / `relinkChildren`). Hosts use it to validate
+        // that no relationship target is managed by a different model context
+        // than the one a commit writes to — SwiftData does not validate
+        // cross-context links and silently corrupts the graph.
+        let relationshipTargetsFunc = try FunctionDeclSyntax("public func relationshipTargets() -> [Any]") {
+            CodeBlockItemListSyntax {
+                CodeBlockItemSyntax("var __targets: [Any] = []")
+                for key in codingKeys {
+                    CodeBlockItemSyntax("RelationshipTargets.collect(self.\(raw: key), into: &__targets)")
+                }
+                CodeBlockItemSyntax("return __targets")
+            }
+        }
+
         // Generate encode(to encoder:)
         let encodeToEncoder = try FunctionDeclSyntax("public func encode(to encoder: Encoder) throws") {
             CodeBlockItemListSyntax {
@@ -176,6 +194,7 @@ public struct CodableClassMacro: MemberMacro {
             DeclSyntax(initFromDecoder),
             DeclSyntax(updateValuesFunc),
             DeclSyntax(relinkChildrenFunc),
+            DeclSyntax(relationshipTargetsFunc),
             DeclSyntax(encodeToEncoder)
         ]
     }
