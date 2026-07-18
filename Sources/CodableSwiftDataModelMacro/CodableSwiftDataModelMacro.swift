@@ -78,3 +78,45 @@ public enum ChildRelink {
 public enum RelationshipTargets {
     public static func collect<T>(_ value: T, into targets: inout [Any]) {}
 }
+
+/// Marks a coded to-one property as a FORWARD model reference (the model owns
+/// or references the target; e.g. an exercise's `equipment`). Behaviorally
+/// inert — relinking already treats unmarked properties as forward refs
+/// (`ChildRelink.resolve`: persisted row if one exists, else the decoded
+/// incoming copy). The marker exists to satisfy `@CodableClass`'s to-one role
+/// diagnostic: every coded optional to-one of non-primitive type must declare
+/// whether it is `@BackRef`, `@ForwardRef`, or `@CodableValue`, so a parent
+/// back-reference can never silently default to forward-ref adoption (which
+/// duplicates the parent row per child).
+@attached(peer, names: arbitrary)
+public macro ForwardRef() = #externalMacro(module: "CodableSwiftDataModelMacroMacros", type: "ForwardRefMacro")
+
+/// Marks a coded optional property as a plain Codable VALUE type (not a
+/// SwiftData model; e.g. a persisted `Codable` struct). Behaviorally inert —
+/// value types already pass through relinking untouched. The marker exists to
+/// satisfy `@CodableClass`'s to-one role diagnostic (see `@ForwardRef`),
+/// because the macro cannot distinguish a model type from a value type
+/// syntactically.
+@attached(peer, names: arbitrary)
+public macro CodableValue() = #externalMacro(module: "CodableSwiftDataModelMacroMacros", type: "CodableValueMacro")
+
+/// Fetch router for the generated `safe<Relationship>` accessors.
+///
+/// For every to-many relationship declaring `@Relationship(inverse: \Child.prop)`,
+/// the macro emits a `safe<Name>` accessor that fetches the CURRENT child rows
+/// by inverse id instead of walking the live relationship (whose held faults
+/// trap when an external writer re-keyed the rows):
+///
+/// ```swift
+/// public var safeIntervals: [ExerciseInterval] {
+///     guard let context = modelContext else { return intervals ?? [] }
+///     let __ownID = id
+///     let __descriptor = FetchDescriptor<ExerciseInterval>(predicate: #Predicate { $0.exercise?.id == __ownID })
+///     return SafeFetch.fetch(__descriptor, in: context)
+/// }
+/// ```
+///
+/// The host module must provide `SafeFetch.fetch(_:in:)` (typically
+/// `do { try context.fetch(descriptor) } catch { log; return [] }`) — it is
+/// NOT declared here so this package stays free of a SwiftData dependency and
+/// hosts keep error logging in their own logging system.

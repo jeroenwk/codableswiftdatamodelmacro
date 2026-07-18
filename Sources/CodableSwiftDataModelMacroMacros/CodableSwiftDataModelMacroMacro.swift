@@ -1,7 +1,17 @@
 import SwiftCompilerPlugin
+import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
+
+/// Diagnostic emitted by `CodableClassMacro` for model-contract violations
+/// (only on classes whose inheritance clause names `CodableModel`).
+struct CodableClassDiagnostic: DiagnosticMessage {
+    let message: String
+    let id: String
+    var diagnosticID: MessageID { MessageID(domain: "CodableSwiftDataModelMacro", id: id) }
+    var severity: DiagnosticSeverity { .error }
+}
 
 public struct CodableClassMacro: MemberMacro {
     
@@ -186,7 +196,7 @@ public struct CodableClassMacro: MemberMacro {
             }
         }
         
-        return [
+        var decls = [
             DeclSyntax(prevDataProperty),
             DeclSyntax(objectDidChangeProperty),
             DeclSyntax(codingKeysProperty),
@@ -197,6 +207,162 @@ public struct CodableClassMacro: MemberMacro {
             DeclSyntax(relationshipTargetsFunc),
             DeclSyntax(encodeToEncoder)
         ]
+
+        // Generate safe<Relationship> accessors — one per to-many relationship
+        // whose `@Relationship(inverse: \Child.prop)` is declared on this class.
+        // A live to-many walk on a store-backed model materializes held child
+        // faults, which traps (`_InvalidFutureBackingData`) when an external
+        // writer (CloudKit mirror coordinator, or a sibling context) has
+        // re-keyed the rows. The safe accessor instead fetches CURRENT rows by
+        // the child's inverse id — the inverse keypath in the attribute gives
+        // the macro both the child type and the inverse property name. The
+        // fetch routes through the host's `SafeFetch.fetch` (do/catch +
+        // logging stays host-side). Detached (never-inserted) instances have
+        // no context and no external writer, so the live array is returned.
+        for property in properties {
+            guard let inverse = relationshipInverse(of: property),
+                  let binding = property.bindings.first,
+                  let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text else { continue }
+            let isOptional = binding.typeAnnotation?.type.is(OptionalTypeSyntax.self) ?? false
+            guard elementType(of: property) != nil else { continue }   // to-many only
+            let accessorName = "safe" + name.prefix(1).uppercased() + name.dropFirst()
+            let fallback = isOptional ? "\(name) ?? []" : name
+            let safeAccessor = try VariableDeclSyntax("public var \(raw: accessorName): [\(raw: inverse.childType)]") {
+                CodeBlockItemListSyntax {
+                    CodeBlockItemSyntax("guard let context = modelContext else { return \(raw: fallback) }")
+                    CodeBlockItemSyntax("let __ownID = id")
+                    CodeBlockItemSyntax("let __descriptor = FetchDescriptor<\(raw: inverse.childType)>(predicate: #Predicate { $0.\(raw: inverse.property)?.id == __ownID })")
+                    CodeBlockItemSyntax("return SafeFetch.fetch(__descriptor, in: context)")
+                }
+            }
+            decls.append(DeclSyntax(safeAccessor))
+        }
+
+        // The remaining generation + the model-contract diagnostics apply only
+        // to classes that declare CodableModel conformance in their own
+        // inheritance clause (the macro cannot see conformances added in
+        // extensions — plain @CodableClass value/demo classes are exempt).
+        let isCodableModel = classDecl.inheritanceClause?.inheritedTypes.contains { inherited in
+            let text = inherited.type.trimmedDescription
+            return text == "CodableModel" || text == "SelfCodableModel"
+        } ?? false
+
+        if isCodableModel {
+            // Generate idPredicate — the concrete-typed id predicate every
+            // id-keyed fetch uses. It exists per type because a `#Predicate`
+            // built over a generic `T` crashes SwiftData's keypath-to-string
+            // conversion; the macro is the right place for the concrete copy.
+            let idPredicateFunc = try FunctionDeclSyntax("public static func idPredicate(_ id: UUID) -> Predicate<\(raw: className)>") {
+                CodeBlockItemListSyntax {
+                    CodeBlockItemSyntax("return #Predicate<\(raw: className)> { $0.id == id }")
+                }
+            }
+            decls.append(DeclSyntax(idPredicateFunc))
+
+            diagnoseModelContract(classDecl: classDecl, properties: properties, in: context)
+        }
+
+        return decls
+    }
+
+    /// Model-contract diagnostics (CodableModel classes only):
+    ///
+    /// 1. `dedupNonce` must exist and be `@NonCodable`. The property itself
+    ///    cannot be macro-generated — `@Model` cannot see other macros'
+    ///    output, so a generated stored property would silently drop out of
+    ///    the SwiftData schema (not persisted, not CloudKit-synced). What CAN
+    ///    be enforced is that the hand-written copy is present and never
+    ///    travels in payloads.
+    /// 2. Every coded OPTIONAL to-one property of non-primitive type must
+    ///    declare its relationship role: `@BackRef` (inverse parent pointer,
+    ///    relinks to persisted-or-nil), `@ForwardRef` (forward model
+    ///    reference, relinks to persisted-or-incoming), or `@CodableValue`
+    ///    (plain Codable value type, not a model). An unmarked model-typed
+    ///    to-one silently defaults to forward-ref relinking — adopting a
+    ///    decoded parent copy duplicates the parent row per child (the
+    ///    duplicate-Exercise cascade bug). The macro cannot tell a model type
+    ///    from a value type syntactically, so the role must be explicit.
+    private static func diagnoseModelContract(classDecl: ClassDeclSyntax,
+                                              properties: [VariableDeclSyntax],
+                                              in context: some MacroExpansionContext) {
+        let primitiveTypes: Set<String> = [
+            "String", "Int", "Int8", "Int16", "Int32", "Int64",
+            "UInt", "UInt8", "UInt16", "UInt32", "UInt64",
+            "Double", "Float", "CGFloat", "Bool", "Date", "UUID",
+            "Data", "TimeInterval", "Decimal"
+        ]
+
+        var dedupNonceProperty: VariableDeclSyntax?
+        for property in properties {
+            guard let binding = property.bindings.first,
+                  let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text else { continue }
+            if name == "dedupNonce" { dedupNonceProperty = property }
+
+            // Rule 2 — unmarked optional to-one of non-primitive type.
+            guard property.bindingSpecifier.text == "var",
+                  !property.modifiers.contains(where: { $0.name.text == "static" }),
+                  binding.accessorBlock == nil,
+                  let wrapped = binding.typeAnnotation?.type.as(OptionalTypeSyntax.self)?.wrappedType,
+                  let typeName = wrapped.as(IdentifierTypeSyntax.self)?.name.text,
+                  !primitiveTypes.contains(typeName) else { continue }
+            let exempting = ["BackRef", "ForwardRef", "CodableValue", "NonCodable", "Transient", "Relationship"]
+            if !exempting.contains(where: { hasAttribute(property, $0) }) {
+                context.diagnose(Diagnostic(
+                    node: Syntax(property),
+                    message: CodableClassDiagnostic(
+                        message: "'\(name): \(typeName)?' must declare its relationship role: @BackRef (inverse parent pointer), @ForwardRef (forward model reference), or @CodableValue (not a SwiftData model). An unmarked model-typed to-one relinks like a forward ref and can adopt a decoded parent copy as a duplicate row.",
+                        id: "unmarkedToOne")))
+            }
+        }
+
+        // Rule 1 — dedupNonce presence + @NonCodable.
+        if let dedupNonceProperty {
+            if !hasAttribute(dedupNonceProperty, "NonCodable") {
+                context.diagnose(Diagnostic(
+                    node: Syntax(dedupNonceProperty),
+                    message: CodableClassDiagnostic(
+                        message: "'dedupNonce' must be @NonCodable: it is per-row instance identity and must never travel in payloads (a coded nonce would defeat duplicate resolution).",
+                        id: "codableDedupNonce")))
+            }
+        } else {
+            context.diagnose(Diagnostic(
+                node: Syntax(classDecl.name),
+                message: CodableClassDiagnostic(
+                    message: "CodableModel class is missing '@NonCodable public var dedupNonce: String = UUID().uuidString'. It cannot be macro-generated (@Model would not see it → not persisted), so declare it by hand.",
+                    id: "missingDedupNonce")))
+        }
+    }
+
+    /// The `inverse: \Child.prop` argument of a property's `@Relationship`
+    /// attribute, if present.
+    private static func relationshipInverse(of property: VariableDeclSyntax) -> (childType: String, property: String)? {
+        for attribute in property.attributes {
+            guard let attribute = attribute.as(AttributeSyntax.self),
+                  attribute.attributeName.as(IdentifierTypeSyntax.self)?.name.text == "Relationship",
+                  let arguments = attribute.arguments?.as(LabeledExprListSyntax.self) else { continue }
+            for argument in arguments where argument.label?.text == "inverse" {
+                guard let keyPath = argument.expression.as(KeyPathExprSyntax.self),
+                      let root = keyPath.root?.as(IdentifierTypeSyntax.self)?.name.text,
+                      let component = keyPath.components.first?.component.as(KeyPathPropertyComponentSyntax.self) else { continue }
+                return (childType: root, property: component.declName.baseName.text)
+            }
+        }
+        return nil
+    }
+
+    /// The element type of an array-typed (optionally optional) property, or
+    /// nil for non-array types.
+    private static func elementType(of property: VariableDeclSyntax) -> String? {
+        guard var type = property.bindings.first?.typeAnnotation?.type else { return nil }
+        if let optional = type.as(OptionalTypeSyntax.self) { type = optional.wrappedType }
+        return type.as(ArrayTypeSyntax.self)?.element.as(IdentifierTypeSyntax.self)?.name.text
+    }
+
+    private static func hasAttribute(_ property: VariableDeclSyntax, _ name: String) -> Bool {
+        property.attributes.contains { attribute in
+            attribute.as(AttributeSyntax.self)?
+                .attributeName.as(IdentifierTypeSyntax.self)?.name.text == name
+        }
     }
     
     static func type(for key: String, in properties: [VariableDeclSyntax]) -> (String, Bool, Bool) {
@@ -252,11 +418,35 @@ public struct BackRefMacro: PeerMacro {
     }
 }
 
+public struct ForwardRefMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        // Marker only — satisfies CodableClassMacro's to-one role diagnostic.
+        return []
+    }
+}
+
+public struct CodableValueMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        // Marker only — satisfies CodableClassMacro's to-one role diagnostic.
+        return []
+    }
+}
+
 @main
 struct CodableTestMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         CodableClassMacro.self,
         NonCodableMacro.self,
-        BackRefMacro.self
+        BackRefMacro.self,
+        ForwardRefMacro.self,
+        CodableValueMacro.self
     ]
 }
